@@ -64,6 +64,9 @@ int main()
         ucFlag = 0;
 
         serverAccept(&unSocket, &unAccept);
+
+        // To clear the recieved buffer.
+        memset(ucRecievedBuffer, 0, sizeof(ucRecievedBuffer));
         recv(unAccept, ucRecievedBuffer, sizeof(ucRecievedBuffer), 0);
 
         for (ucIndex = 0; ucIndex < ucSizeData; ucIndex++)
