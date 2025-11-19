@@ -229,15 +229,20 @@ static bool serverHelloHandler(uint16* punSocket, uint8* pucBuffer)
 {
     bool blReturn = false;
     uint16 unLength = 0;
+    uint8 ucTimeData[MAX_CHAR_SIZE] = "";
 
     if ((NULL != punSocket) && (NULL != pucBuffer))
     {
+        // To get current date and time.
+        serverCurrentTime(ucTimeData);
+
         // Create JSON object.
         cJSON *pstJsonObject = cJSON_CreateObject();                
         cJSON_AddStringToObject(pstJsonObject, pucBuffer, "Hi"); 
+        cJSON_AddStringToObject(pstJsonObject, "Time", ucTimeData);
 
         // Convert to JSON string
-        uint8 *pcJsonResponse = cJSON_Print(pstJsonObject);
+        uint8 *pcJsonResponse = cJSON_PrintUnformatted(pstJsonObject);
         unLength = strlen(pcJsonResponse);
 
         // Send size of the response to the client.
@@ -280,7 +285,7 @@ static bool serverTimeHandler(uint16* punSocket, uint8* pucBuffer)
         cJSON_AddStringToObject(pstJsonObject, pucBuffer, ucTimeData); 
 
         // Convert to JSON string
-        uint8 *pcJsonResponse = cJSON_Print(pstJsonObject); 
+        uint8 *pcJsonResponse = cJSON_PrintUnformatted(pstJsonObject); 
         unLength = strlen(pcJsonResponse);
 
         // Send size of the response to the client.
@@ -330,7 +335,7 @@ static bool serverStatusHandler(uint16* punSocket, uint8* pucBuffer)
         cJSON_AddItemToArray(pstJsonArray, pstJsonObject);
 
         // Convert to JSON string
-        uint8 *pcJsonResponse = cJSON_Print(pstJsonArray); 
+        uint8 *pcJsonResponse = cJSON_PrintUnformatted(pstJsonArray); 
         unLength = strlen(pcJsonResponse);
 
         // Send size of the response to the client.
@@ -369,7 +374,7 @@ static bool serverUnKnownHandler(uint16* punSocket, uint8* pucBuffer)
         cJSON_AddStringToObject(pstJsonObject, pucBuffer, "Unknown Command"); 
 
         // Convert to JSON string
-        uint8 *pcJsonResponse = cJSON_Print(pstJsonObject); 
+        uint8 *pcJsonResponse = cJSON_PrintUnformatted(pstJsonObject); 
         unLength = strlen(pcJsonResponse);
 
         // Send size of the response to the client.
@@ -459,7 +464,7 @@ static bool serverAllHandler(uint16* punSocket, uint8* pucBuffer)
         cJSON_AddItemToArray(pstJsonArray, pstJsonObject);
 
         // Convert to JSON string
-        uint8 *pcJsonResponse = cJSON_Print(pstJsonArray); 
+        uint8 *pcJsonResponse = cJSON_PrintUnformatted(pstJsonArray); 
         unLength = strlen(pcJsonResponse);
 
         // Send size of the response to the client.
