@@ -20,16 +20,25 @@
 //**************************** Local Variables *********************************
 
 //***************************** Local Functions ********************************
-static bool serverSocket(uint16* punSocket);
-static bool serverBind(uint16* punBind, uint16* punSocket);
-static bool serverListen(uint16* punSocket, uint16* punListen);
-static bool serverAccept(uint16* punSocket, uint16* punAccept);
-static bool serverHelloHandler(uint16* punSocket, uint8* pucBuffer);
-static bool serverStatusHandler(uint16* punSocket, uint8* pucBuffer);
-static bool serverUnKnownHandler(uint16* punSocket, uint8* pucBuffer);
-static bool serverTimeHandler(uint16* punSocket, uint8* pucBuffer);
+static bool serverSocket(int16* punSocket);
+static bool serverBind(int16* punBind, int16* punSocket);
+static bool serverListen(int16* punSocket, int16* punListen);
+static bool serverAccept(int16* punSocket, int16* punAccept);
+static bool serverHelloHandler(int16* punSocket, uint8* pucBuffer);
+static bool serverStatusHandler(int16* punSocket, uint8* pucBuffer);
+static bool serverUnknownHandler(int16* punSocket, uint8* pucBuffer);
+static bool serverTimeHandler(int16* punSocket, uint8* pucBuffer);
 static bool serverCurrentTime(uint8* pucBuffer);
-static bool serverAllHandler(uint16* punSocket, uint8* pucBuffer);
+static bool serverAllHandler(int16* punSocket, uint8* pucBuffer);
+static bool serverListHandler(int16* punSocket, uint8* pucBuffer);
+static bool serverSaveFile(uint8* pucBuffer);
+static bool serverInvalidResponse(int16* punSocket);
+static bool serverRequestHandler(int16* punSocket, uint8* pucBuffer,
+                                 uint8* pucErrorFlag);
+static bool serverGetRequestValidation(uint8* pucBuffer, 
+                                       uint8* pucMessageValue);
+static bool serverPostRequestValidation(uint8* pucBuffer, 
+                                        uint8* pucMessageValue);
 
 //*****************************.mainFunction.***********************************
 // Purpose : Implements continuously running TCP server that listens for client 
@@ -41,19 +50,13 @@ static bool serverAllHandler(uint16* punSocket, uint8* pucBuffer);
 //******************************************************************************
 int main()
 {
-    uint8 ucFlag = 0;
-    uint8 ucIndex = 0;
-    uint16 unBind = 0;
-    uint16 unSocket = 0;
-    uint16 unListen = 0;
-    uint16 unAccept = 0;
-    uint8 ucRecievedBuffer[MAX_CHAR_SIZE] = "";
-    _DATA_HANDLER_ stDataHandler[] = 
-        {
-            {"Hello", serverHelloHandler}, {"Status", serverStatusHandler}, 
-            {"Time", serverTimeHandler}, {"All", serverAllHandler}
-        };
-    uint8 ucSizeData = sizeof(stDataHandler) / sizeof(stDataHandler[0]);
+    int16 unBind = 0;
+    int16 unSocket = 0;
+    int16 unListen = 0;
+    int16 unAccept = 0;
+    int16 unLength = 0;
+    uint8 ucErrorFlag = 0;
+    uint8 ucRecievedBuffer[MAX_CHAR_SIZE] = {0};
 
     serverSocket(&unSocket);
     serverBind(&unBind, &unSocket);
@@ -61,27 +64,26 @@ int main()
 
     while (1)
     {
-        ucFlag = 0;
-
         serverAccept(&unSocket, &unAccept);
 
-        // To clear the recieved buffer.
+        // To clear buffers.
         memset(ucRecievedBuffer, 0, sizeof(ucRecievedBuffer));
-        recv(unAccept, ucRecievedBuffer, sizeof(ucRecievedBuffer), 0);
+        unLength = recv(unAccept, ucRecievedBuffer, sizeof(ucRecievedBuffer),
+                        0);
 
-        for (ucIndex = 0; ucIndex < ucSizeData; ucIndex++)
+        if (0 >= unLength)
         {
-            if (0 == strcmp(stDataHandler[ucIndex].ucData, ucRecievedBuffer))
-            {
-                ucFlag = 1;
-                stDataHandler[ucIndex].pFunction(&unAccept, ucRecievedBuffer);
-            }
+            serverInvalidResponse(&unAccept);
+            close(unAccept);
+            continue;
         }
 
-        // Check if the received buffer is matched with data handler.
-        if (0 == ucFlag)
+        ucRecievedBuffer[unLength] = '\0';
+        serverRequestHandler(&unAccept, ucRecievedBuffer, &ucErrorFlag);
+        
+        if (0 != ucErrorFlag)
         {
-            serverUnKnownHandler(&unAccept, ucRecievedBuffer);
+            continue;
         }
     }
 
@@ -97,20 +99,25 @@ int main()
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverSocket(uint16* punSocket)
+static bool serverSocket(int16* punSocket)
 {
     bool blReturn = false;
+    int16 unSocket = 0;
+    uint8 ucOption = 1;
 
     if (NULL != punSocket)
     {
-        *punSocket = socket(AF_INET, SOCK_STREAM, 0);
+        unSocket = socket(AF_INET, SOCK_STREAM, 0);
 
-        if (ERROR_CODE == *punSocket)
+        if (ERROR_CODE == unSocket)
         {
             printf("Socket creation failed\n");
         }
         else
         {
+            setsockopt(unSocket, SOL_SOCKET, SO_REUSEADDR, &ucOption, 
+                       sizeof(ucOption));
+            *punSocket = unSocket;
             blReturn = true;
         }
     }
@@ -126,7 +133,7 @@ static bool serverSocket(uint16* punSocket)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverBind(uint16* punBind, uint16* punSocket)
+static bool serverBind(int16* punBind, int16* punSocket)
 {
     bool blReturn = false;
 
@@ -162,7 +169,7 @@ static bool serverBind(uint16* punBind, uint16* punSocket)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverListen(uint16* punSocket, uint16* punListen)
+static bool serverListen(int16* punSocket, int16* punListen)
 {
     bool blReturn = false;
 
@@ -191,7 +198,7 @@ static bool serverListen(uint16* punSocket, uint16* punListen)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverAccept(uint16* punSocket, uint16* punAccept)
+static bool serverAccept(int16* punSocket, int16* punAccept)
 {
     bool blReturn = false;
 
@@ -217,6 +224,117 @@ static bool serverAccept(uint16* punSocket, uint16* punAccept)
     return blReturn;
 }
 
+//*************************.serverRequestHandler.*******************************
+// Purpose : Handle request and send corresponding responses.
+// Inputs  : punSocket - Pointer to socket descriptor.
+//         : pucBuffer - Pointer to the Received request buffer.
+//         : pucErrorFlag - Pointer to a flag used to indicates request errors.
+// Outputs : none
+// Return  : blReturn
+// Notes   : None
+//******************************************************************************
+static bool serverRequestHandler(int16* punSocket, uint8* pucBuffer, 
+                                 uint8* pucErrorFlag)
+{
+    bool blReturn = false;
+    uint16 unLength = 0;
+    uint8 ucFlag = 0;
+    uint8 ucIndex = 0;
+    uint8 ucValidation = 0;
+    uint8 ucMessageValue[MAX_CHAR_SIZE] = {0};
+    uint8 ucRequestData[MAX_CHAR_SIZE] = {0};
+    uint8 ucRequestMethod[MAX_CHAR_SIZE] = {0};
+    static uint8 sucLatestFile[MAX_CHAR_SIZE] = {0};
+    _DATA_HANDLER_ stDataHandler[] = 
+        {
+            {"Hello", serverHelloHandler}, {"Status", serverStatusHandler}, 
+            {"Time", serverTimeHandler}, {"All", serverAllHandler}
+        };
+    uint8 ucSizeData = sizeof(stDataHandler) / sizeof(stDataHandler[0]);
+
+    if ((NULL != punSocket) && (NULL != pucBuffer) && (NULL != pucErrorFlag))
+    {
+        // POST/GET request 
+        if (NULL != strstr(pucBuffer, "type="))
+        {
+            ucRequestData[0] = '\0';
+            ucRequestMethod[0] = '\0';
+            sscanf(pucBuffer, "type=%[^&]&%s", ucRequestMethod, ucRequestData);
+
+            // GET request
+            if (0 == strcmp(ucRequestMethod, "GET"))
+            {
+                if (true != serverGetRequestValidation(ucRequestData, 
+                                                       ucMessageValue))
+                {
+                    serverInvalidResponse(punSocket);
+                    *pucErrorFlag = 1;
+                }
+                else
+                {
+                    ucValidation = 1;
+                }
+            }
+            // POST request.
+            else if (0 == strcmp(ucRequestMethod, "POST"))
+            {
+                if (true != serverPostRequestValidation(ucRequestData, 
+                                                        ucMessageValue))
+                {
+                    serverInvalidResponse(punSocket);
+                    *pucErrorFlag = 1;
+                }
+                else
+                {
+                    ucValidation = 1;
+                }
+            }
+
+            if ((NULL != ucMessageValue) && (0 != ucValidation))
+            {
+                for (ucIndex = 0; ucIndex < ucSizeData; ucIndex++)
+                {
+                    if (0 == strcmp(stDataHandler[ucIndex].ucData, 
+                                    ucMessageValue))
+                    {
+                        ucFlag = 1;
+                        stDataHandler[ucIndex].pFunction(punSocket, 
+                                                         ucMessageValue);
+                    }
+                }
+
+                // Check if the received buffer is matched with data handler.
+                if (0 == ucFlag)
+                {
+                    serverUnknownHandler(punSocket, ucMessageValue);
+                }
+            }
+            else
+            {
+                serverInvalidResponse(punSocket);
+            }
+        }
+        // File upload request.
+        else if (NULL != strstr(pucBuffer, "FilePath:"))
+        {
+            serverSaveFile(pucBuffer);
+            printf("Received buffer: %s\n", pucBuffer);
+            strcpy(sucLatestFile, pucBuffer);
+        }
+        // File list request.
+        else if (NULL != strstr(pucBuffer, "List"))
+        {
+            serverListHandler(punSocket, sucLatestFile);
+        }
+        
+        close(*punSocket);
+
+        blReturn = true;
+    }
+
+    return blReturn;
+}
+
 //**************************.serverHelloHandler.********************************
 // Purpose : Send command to server.
 // Inputs  : punSocket - Pointer to socket descriptor.
@@ -225,7 +343,7 @@ static bool serverAccept(uint16* punSocket, uint16* punAccept)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverHelloHandler(uint16* punSocket, uint8* pucBuffer)
+static bool serverHelloHandler(int16* punSocket, uint8* pucBuffer)
 {
     bool blReturn = false;
     uint16 unLength = 0;
@@ -269,7 +387,7 @@ static bool serverHelloHandler(uint16* punSocket, uint8* pucBuffer)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverTimeHandler(uint16* punSocket, uint8* pucBuffer)
+static bool serverTimeHandler(int16* punSocket, uint8* pucBuffer)
 {
     bool blReturn = false;
     uint8 ucTimeData[MAX_CHAR_SIZE] = "";
@@ -312,7 +430,7 @@ static bool serverTimeHandler(uint16* punSocket, uint8* pucBuffer)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverStatusHandler(uint16* punSocket, uint8* pucBuffer)
+static bool serverStatusHandler(int16* punSocket, uint8* pucBuffer)
 {
     bool blReturn = false;
     uint8 ucTimeData[MAX_CHAR_SIZE] = "";
@@ -362,7 +480,7 @@ static bool serverStatusHandler(uint16* punSocket, uint8* pucBuffer)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverUnKnownHandler(uint16* punSocket, uint8* pucBuffer)
+static bool serverUnknownHandler(int16* punSocket, uint8* pucBuffer)
 {
     bool blReturn = false;
     uint16 unLength = 0;
@@ -387,6 +505,73 @@ static bool serverUnKnownHandler(uint16* punSocket, uint8* pucBuffer)
         // Free string memory
         free(pcJsonResponse);
         
+        blReturn = true;
+    }
+
+    return blReturn;
+}
+
+//****************************.serverListHandler.*******************************
+// Purpose : Send command to server.
+// Inputs  : punSocket - Pointer to socket descriptor.
+//         : pucBuffer - Pointer to the key name to be added in the json object.
+// Outputs : none
+// Return  : blReturn
+// Notes   : None
+//******************************************************************************
+static bool serverListHandler(int16* punSocket, uint8* pucBuffer)
+{
+    bool blReturn = false;
+    uint16 unLength = 0;
+
+    if ((NULL != punSocket) && (NULL != pucBuffer))
+    {
+        // Create JSON object.
+        cJSON *pstJsonObject = cJSON_CreateObject();                
+        cJSON_AddStringToObject(pstJsonObject, "Files", pucBuffer); 
+
+        // Convert to JSON string
+        uint8 *pcJsonResponse = cJSON_PrintUnformatted(pstJsonObject); 
+        unLength = strlen(pcJsonResponse);
+
+        // Send size of the response to the client.
+        send(*punSocket, &unLength, sizeof(unLength), 0);
+        send(*punSocket, pcJsonResponse, unLength, 0);
+
+        // Free JSON object
+        cJSON_Delete(pstJsonObject);   
+        
+        // Free string memory
+        free(pcJsonResponse);
+        
+        blReturn = true;
+    }
+
+    return blReturn;
+}
+
+//******************************.serverSaveFile.********************************
+// Purpose : Extract file path from the received buffer and copy to the buffer.
+// Inputs  : pucBuffer - Pointer to the buffer to store the file path.
+// Outputs : none
+// Return  : blReturn
+// Notes   : None
+//******************************************************************************
+static bool serverSaveFile(uint8* pucBuffer)
+{
+    bool blReturn = false;
+    uint16 unLength = 0;
+
+    if (NULL != pucBuffer)
+    {
+        int8 *pucActualPath = malloc(strlen(pucBuffer) + 1);
+        int8 *pucPath = strstr(pucBuffer, ":");
+
+        strncpy(pucActualPath, pucPath + 1, strlen(pucBuffer));
+        pucActualPath[strlen(pucBuffer)] = '\0';
+        strcpy(pucBuffer, pucActualPath);
+        free(pucActualPath);
+
         blReturn = true;
     }
 
@@ -430,7 +615,7 @@ static bool serverCurrentTime(uint8* pucBuffer)
 // Return  : blReturn
 // Notes   : None
 //******************************************************************************
-static bool serverAllHandler(uint16* punSocket, uint8* pucBuffer)
+static bool serverAllHandler(int16* punSocket, uint8* pucBuffer)
 {
     bool blReturn = false;
     uint8 ucIndex = 0;
@@ -478,6 +663,110 @@ static bool serverAllHandler(uint16* punSocket, uint8* pucBuffer)
         free(pcJsonResponse);
 
         blReturn = true;
+    }
+
+    return blReturn;
+}
+
+//****************************.serverInvalidResponse.***************************
+// Purpose : Handle invalide request.
+// Inputs  : punSocket - Pointer to socket descriptor.
+// Outputs : none
+// Return  : blReturn
+// Notes   : None
+//******************************************************************************
+static bool serverInvalidResponse(int16* punSocket)
+{
+    bool blReturn = false;
+    uint16 unLength = 0;
+
+    if (NULL != punSocket)
+    {
+        unLength = strlen("Invalid Request");
+        send(*punSocket, &unLength, sizeof(unLength), 0);
+        send(*punSocket, "Invalid Request", unLength, 0);
+
+        blReturn = true;
+    }
+
+    return blReturn;
+}
+
+//**************************.serverGetRequestValidation.************************
+// Purpose : Validate GET request buffer and extract message value.
+// Inputs  : pucBuffer - Pointer to the buffer containg get request.
+//         : pucMessageValue - Pointer to the extracted message value.
+// Outputs : none
+// Return  : blReturn
+// Notes   : None
+//******************************************************************************
+static bool serverGetRequestValidation(uint8* pucBuffer, uint8* pucMessageValue)
+{
+    bool blReturn = false;
+    uint16 unLength = 0;
+
+    // Check if data is empty
+    if ((NULL != pucBuffer) && (NULL != pucMessageValue))
+    {
+        // Check whether '=' is present
+        if (NULL != strchr(pucBuffer, '='))
+        {
+            // Check whether key msg is present
+            if (0 == strncmp(pucBuffer, "msg=", 4))
+            {
+                sscanf(pucBuffer, "msg=%s", pucMessageValue);
+
+                // Check wheather value is present
+                if (0 < strlen(pucMessageValue))
+                {
+                    blReturn = true;
+                }
+            }
+        }
+    }
+
+    return blReturn;
+}
+
+//************************.serverPostRequestValidation.*************************
+// Purpose : Validate POST request buffer and extract message value.
+// Inputs  : pucBuffer - Pointer to the buffer containg get request.
+//         : pucMessageValue - Pointer to the extracted message value.
+// Outputs : none
+// Return  : blReturn
+// Notes   : None
+//******************************************************************************
+static bool serverPostRequestValidation(uint8* pucBuffer, 
+                                        uint8* pucMessageValue)
+{
+    bool blReturn = false;
+    uint16 unLength = 0;
+
+    // Check if data is empty
+    if ((NULL != pucBuffer) && (NULL != pucMessageValue))
+    {
+        // To convert JSON String to object.
+        cJSON *pJsonObject = cJSON_Parse(pucBuffer);
+
+        // Check if data is JSON format.
+        if (NULL != pJsonObject)
+        {
+            cJSON *pMessage = cJSON_GetObjectItem(pJsonObject, "msg");
+
+            // Check whether key msg is present.
+            if (NULL != pMessage)
+            {
+                strcpy((char* )pucMessageValue, pMessage->valuestring);
+
+                // Check wheather value is present
+                if (0 < strlen(pucMessageValue))
+                {
+                    blReturn = true;
+                }
+            }
+        }
+
+        cJSON_Delete(pJsonObject);
     }
 
     return blReturn;

@@ -30,7 +30,7 @@ typedef char int8;
 typedef signed short int16;
 
 //************************* Global Constants ***********************************
-#define MAX_CHAR_SIZE               (20)
+#define MAX_CHAR_SIZE               (50)
 #define PORT                        (8080)
 #define CLIENT_RECEIVE_TIMEOUT      (2)
 #define ERROR_CODE                  (-1)

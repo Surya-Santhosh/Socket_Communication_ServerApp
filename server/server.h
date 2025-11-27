@@ -17,7 +17,7 @@
 typedef struct _DATA_HANDLER_
 {
     uint8 ucData[MAX_CHAR_SIZE];
-    bool (*pFunction)(uint16* punSocket, uint8* pucBuffer);
+    bool (*pFunction)(int16* punSocket, uint8* pucBuffer);
 }_DATA_HANDLER_;
 
 //************************* Global Constants ***********************************
