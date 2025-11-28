@@ -241,10 +241,13 @@ static bool serverRequestHandler(int16* punSocket, uint8* pucBuffer,
     uint8 ucFlag = 0;
     uint8 ucIndex = 0;
     uint8 ucValidation = 0;
+    uint32 ulFileListLength = 0;
+    int8 *pucUploadedFileList = NULL;
     uint8 ucMessageValue[MAX_CHAR_SIZE] = {0};
     uint8 ucRequestData[MAX_CHAR_SIZE] = {0};
     uint8 ucRequestMethod[MAX_CHAR_SIZE] = {0};
-    static uint8 sucLatestFile[MAX_CHAR_SIZE] = {0};
+    static uint8 sucFileList[NUM_FILES][MAX_CHAR_SIZE] = {0};
+    static uint8 sucFileCount = 0;
     _DATA_HANDLER_ stDataHandler[] = 
         {
             {"Hello", serverHelloHandler}, {"Status", serverStatusHandler}, 
@@ -319,12 +322,42 @@ static bool serverRequestHandler(int16* punSocket, uint8* pucBuffer,
         {
             serverSaveFile(pucBuffer);
             printf("Received buffer: %s\n", pucBuffer);
-            strcpy(sucLatestFile, pucBuffer);
+            strcpy(sucFileList[sucFileCount], pucBuffer);
+            sucFileCount ++;
         }
         // File list request.
         else if (NULL != strstr(pucBuffer, "List"))
         {
-            serverListHandler(punSocket, sucLatestFile);
+            if ('\0' == sucFileList[0][0])
+            {
+                strcpy(sucFileList[0], "No files uploaded");
+                serverListHandler(punSocket, sucFileList[0]);
+            }
+            else
+            {
+                for (ucIndex = 0; ucIndex < sucFileCount; ucIndex++)
+                {
+                    ulFileListLength += strlen(sucFileList[ucIndex]);
+                    ulFileListLength++;
+                }
+
+                ulFileListLength++;
+                pucUploadedFileList = malloc(ulFileListLength + 1);
+                pucUploadedFileList[0] = '\0';
+
+                for (ucIndex = 0; ucIndex < sucFileCount; ucIndex++)
+                {
+                    strcat(pucUploadedFileList, sucFileList[ucIndex]);
+
+                    if ((1 < sucFileCount) && ((sucFileCount - 1) > ucIndex))
+                    {
+                        strcat(pucUploadedFileList, ",");
+                    }
+                }
+
+                serverListHandler(punSocket, pucUploadedFileList);
+                free(pucUploadedFileList);
+            }
         }
         
         close(*punSocket);
